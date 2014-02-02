@@ -1,5 +1,7 @@
 require 'em-xmpp/helpers'
 
+require 'taxi_twin/gcm/message'
+
 module TaxiTwin
   module Gcm
     module Client
@@ -15,10 +17,28 @@ module TaxiTwin
         TaxiTwin::Log.debug 'READY'
 
         on_message do |ctx|
-          TaxiTwin::Log.debug "incomming: #{ctx}"
+          message = ctx.bit(TaxiTwin::Gcm::Message)
+          data = message.data
+          if data
+            TaxiTwin::Log.debug "incomming gcm message: #{data}"
+
+            if data.has_key? "message_type"
+              response = Response.new(data)
+              response.update_queue
+            else
+              request = Request.new(data)
+              send_raw request.ack_response
+              if Queue.instance.free_space > 0
+                send_raw request.dummy_response
+              end
+            end
+          else
+            TaxiTwin::Log.debug "incomming message: #{ctx}"
+          end
           ctx
         end
       end
     end
   end
 end
+

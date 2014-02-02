@@ -2,6 +2,9 @@
 $:.unshift "#{File.dirname(__FILE__)}/../lib"
 
 require 'em-xmpp/connection'
+require 'em-xmpp/handler'
+
+require 'pry'
 
 require 'taxi_twin'
 
