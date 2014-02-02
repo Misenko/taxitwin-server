@@ -19,6 +19,11 @@ CERT_DIR = '/etc/ssl/certs'
 
 cfg = {:certificates => CERT_DIR}
 
+dc = TaxiTwin::Db::Controller.new
+dc.connect
+dc.create_tables
+dc.disconnect
+
 trap(:INT) { EM.stop }
 trap(:TERM) { EM.stop }
 EM.run do
