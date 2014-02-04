@@ -18,18 +18,35 @@ module TaxiTwin
 
       def create_tables
         run_sql_from_file 'create.sql'
+        create_indexes
       end
 
       def drop_tables
         run_sql_from_file 'drop.sql'
       end
 
+      def create_indexes
+        connection.prepare("check_index", "SELECT * FROM pg_class WHERE relname = $1")
+        f = open_sql_file('index.sql')
+        f.each_line do |line|
+          split = line.split '$'
+          unless connection.exec_prepared("check_index", split.take(1)).any?
+            connection.exec(split.last)
+          end
+        end
+        f.close
+      end
+
       def run_sql_from_file(filename)
-        f = File.open(File.join(File.dirname(__FILE__), 'sql', filename), 'r')
+        f = open_sql_file(filename)
         f.each_line do |line|
           connection.exec(line)
         end
         f.close
+      end
+
+      def open_sql_file(filename)
+        File.open(File.join(File.dirname(__FILE__), 'sql', filename), 'r')
       end
     end
   end
