@@ -37,6 +37,7 @@ module TaxiTwin
 
         dc = TaxiTwin::Db::Controller.new
         dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius) do |row|
+          row.delete 'google_id'
           send_response row
         end
 
@@ -76,11 +77,21 @@ module TaxiTwin
         tmp['end_point_id'] = end_id
         tmp['radius'] = radius
         tmp['passengers'] = passengers
-        dc.store_data('taxitwin', tmp)
+        tt_id = dc.store_data('taxitwin', tmp)
 
-        ###TODO###
-        #check wether this new taxitwin is a good match for some taxitwins already in db
-        #if so send them this new taxitwin
+        tmp = tt_data
+        tmp.delete 'type'
+        tmp.delete 'radius'
+        tmp['id'] = tt_id
+        tmp['start_textual'] = start_textual
+        tmp['end_textual'] = end_textual
+        tmp['passengers_total'] = tt_data['passengers']
+        tmp['passenegers'] = '0'
+        tmp['name'] = name
+        dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, "taxitwin.radius") do |row|
+          data['from'] = row['google_id']
+          send_response tmp unless row['id'] == tt_id
+        end
       end
 
       def send_response(message_data)

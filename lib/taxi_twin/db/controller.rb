@@ -55,14 +55,22 @@ module TaxiTwin
 
       def load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius)
         self.connect
+        
+        start_point = "SRID=4326;POINT(#{start_long} #{start_lat})"
+        end_point = "SRID=4326;POINT(#{end_long} #{end_lat})"
+        
+        params = [start_point, end_point, radius]
+
         f = open_sql_file 'subscribe.sql'
         f.each_line do |line|
+          if radius.class == String
+            line.gsub!(/\$3::real/, radius) 
+            params = params.reverse.drop(1).reverse
+          end
           connection.prepare('subscription', line)
         end
 
-        start_point = "SRID=4326;POINT(#{start_long} #{start_lat})"
-        end_point = "SRID=4326;POINT(#{end_long} #{end_lat})"
-        connection.exec_prepared('subscription', [start_point, end_point, radius]).each {|x| yield x if block_given?}
+        connection.exec_prepared('subscription', params).each {|x| yield x if block_given?}
         self.disconnect
       end
 
