@@ -26,11 +26,9 @@ module TaxiTwin
               response = Response.new(data)
               response.update_queue
             else
-              request = Request.new(data)
-              send_raw request.ack_response
-              if Queue.instance.free_space > 0
-                send_raw request.dummy_response
-              end
+              request = Request.new(self, data)
+              request.send_ack
+              request.respond
             end
           else
             TaxiTwin::Log.debug "incomming message: #{ctx}"

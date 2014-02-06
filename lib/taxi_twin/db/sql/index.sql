@@ -1,2 +1,2 @@
 point_geom$CREATE INDEX point_geom ON point USING GIST(geom);
-device_name$CREATE INDEX device_name ON device USING HASH(name);
+device_google_id$CREATE INDEX device_google_id ON device USING HASH(google_id);
