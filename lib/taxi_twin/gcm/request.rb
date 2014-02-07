@@ -1,6 +1,7 @@
 require 'json'
 require 'nokogiri'
 #require 'gcoder'
+require 'set'
 
 require 'em-xmpp/connection'
 
@@ -12,7 +13,7 @@ module TaxiTwin
       def initialize(client, data)
         @client = client
         @data = data
-        @tt_data = data['data']
+        @tt_data = data['data'].clone
         @type = tt_data['type'].to_sym if tt_data.has_key? 'type'
       end
 
@@ -20,9 +21,146 @@ module TaxiTwin
         case type
         when :subscribe
           subscribe
+        when :modify
+          modify
         else
           invalid_request_type
         end
+      end
+
+      def modify
+        device_id = data['from']
+        old_taxitwin = {}
+        dc = TaxiTwin::Db::Controller.new
+        dc.load_taxitwin(device_id) do |row|
+          old_taxitwin = row
+        end
+
+        new_taxitwin = old_taxitwin.clone
+        tt_data.each_pair do |key, value|
+          new_taxitwin[key] = value
+        end
+
+        TaxiTwin::Log.debug "new_taxitwin: #{new_taxitwin}"
+
+        res = load_data_for_modify(old_taxitwin, new_taxitwin)
+
+        TaxiTwin::Log.debug "first res: #{res}"
+
+        res['old_matches'].each_key do |id|
+          tmp = {}
+          tmp['type'] = 'invalidate'
+          tmp['id'] = id
+          send_response tmp
+        end
+
+        res['new_matches'].each_pair do |id, row|
+          row.delete 'google_id'
+          row.delete 'radius'
+          row['type'] = 'offer'
+          send_response row
+        end
+
+        old_taxitwin['radius'] = 'taxitwin.radius'
+        new_taxitwin['radius'] = 'taxitwin.radius'
+        res = load_data_for_modify(old_taxitwin, new_taxitwin)
+
+        TaxiTwin::Log.debug "second res: #{res}"
+
+        res['old_matches'].each_value do |value|
+          tmp = {}
+          tmp['type'] = 'invalidate'
+          tmp['id'] = old_taxitwin['id']
+          data['from'] = value['google_id']
+          send_response tmp
+        end
+
+        res['new_matches'].each_value do |value|
+          tmp = new_taxitwin.clone
+          tmp.delete 'radius'
+          tmp.delete 'google_id'
+          tmp['type'] = 'offer'
+          data['from'] = value['google_id']
+          send_response tmp
+        end
+
+        res['inter'].each_value do |value|
+          tmp = tt_data.clone
+          tmp.delete 'radius'
+          tmp['id'] = new_taxitwin['id']
+          data['from'] = value['google_id']
+          send_response tmp unless tmp.size <= 1
+        end
+
+        to_change = tt_data
+        to_change.delete 'type'
+        if to_change.include? 'start_long' and to_change.include? 'start_lat'
+
+          start_long = to_change['start_long']
+          start_lat = to_change['start_lat']
+          gcoder = GCoder.connect
+          start_textual = gcoder[[start_lat, start_long]][0]['formatted_address']
+
+          start_id = dc.exists?('point', {'longitude' => start_long, 'latitude' => start_lat})
+          unless start_id
+            tmp = {}
+            tmp['longitude'] = start_long
+            tmp['latitude'] = start_lat
+            tmp['textual'] = start_textual
+            start_id = dc.store_data('point', tmp)
+          end
+          to_change.delete 'start_long'
+          to_change.delete 'start_lat'
+          to_change['start_point_id'] = start_id
+        end
+
+        if to_change.include? 'end_long' and to_change.include? 'end_lat'
+
+          end_long = to_change['end_long']
+          end_lat = to_change['end_lat']
+          gcoder = GCoder.connect
+          end_textual = gcoder[[end_lat, end_long]][0]['formatted_address']
+
+          end_id = dc.exists?('point', {'longitude' => end_long, 'latitude' => end_lat})
+          unless end_id
+            tmp = {}
+            tmp['longitude'] = end_long
+            tmp['latitude'] = end_lat
+            tmp['textual'] = end_textual
+            end_id = dc.store_data('point', tmp)
+          end
+          to_change.delete 'end_long'
+          to_change.delete 'end_lat'
+          to_change['end_point_id'] = end_id
+        end
+
+        TaxiTwin::Log.debug("to_change: #{to_change}")
+
+        dc.update_data('taxitwin', to_change, {'id' => new_taxitwin['id']})
+      end
+
+      def load_data_for_modify(old_taxitwin, new_taxitwin)
+        old_matches = {}
+        dc = TaxiTwin::Db::Controller.new
+        dc.load_data_on_subscribe(old_taxitwin['start_long'], old_taxitwin['start_lat'],old_taxitwin['end_long'], old_taxitwin['end_lat'], old_taxitwin['radius']) do |row|
+          old_matches[row['id']] = row unless row['id'] == new_taxitwin['id']
+        end
+
+        TaxiTwin::Log.debug "old_matches: #{old_matches.keys}"
+
+        new_matches = {} 
+        dc.load_data_on_subscribe(new_taxitwin['start_long'], new_taxitwin['start_lat'], new_taxitwin['end_long'], new_taxitwin['end_lat'], new_taxitwin['radius']) do |row|
+          new_matches[row['id']] = row unless row['id'] == new_taxitwin['id']
+        end
+
+        TaxiTwin::Log.debug "new_matches: #{new_matches.keys}"
+
+        inter = new_matches.keys.to_set.intersection old_matches.keys.to_set
+        h = {}
+        h['old_matches'] = old_matches.select {|k, v| !inter.include? k}
+        h['new_matches'] = new_matches.select {|k, v| !inter.include? k}
+        h['inter'] = old_matches.merge(new_matches).select {|k, v| inter.include? k}
+        h
       end
 
       def subscribe
@@ -38,6 +176,7 @@ module TaxiTwin
         dc = TaxiTwin::Db::Controller.new
         dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius) do |row|
           row.delete 'google_id'
+          row['type'] = 'offer'
           send_response row
         end
 
@@ -88,6 +227,7 @@ module TaxiTwin
         tmp['passengers_total'] = tt_data['passengers']
         tmp['passenegers'] = '0'
         tmp['name'] = name
+        tmp['type'] = 'offer'
         dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, "taxitwin.radius") do |row|
           data['from'] = row['google_id']
           send_response tmp unless row['id'] == tt_id

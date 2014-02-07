@@ -74,6 +74,17 @@ module TaxiTwin
         self.disconnect
       end
 
+      def load_taxitwin(device_id)
+        self.connect
+        f = open_sql_file 'load_taxitwin.sql'
+        f.each_line do |line|
+          connection.prepare('load_taxitwin', line)
+        end
+
+        connection.exec_prepared('load_taxitwin', [device_id]).each {|x| yield x if block_given?}
+        self.disconnect
+      end
+      
       def exists?(table, values)
         where = ''
         values.keys.each_with_index do |key, i|
@@ -85,6 +96,25 @@ module TaxiTwin
         res = connection.exec_prepared('exist', values.values) 
         self.disconnect
         res.any? ? res.values.flatten[0] : nil
+      end
+
+      def update_data(table, values, condition)
+        columns = ''
+        values.keys.each_with_index do |key, i|
+          columns += "#{key} = $#{i+1},"
+        end
+        columns = "#{columns.chop}"
+
+        where = ''
+        values.keys.each_with_index do |key, i|
+          where += "#{key} = $#{i+1} AND "
+        end
+        where.slice!(-5..-1)
+
+        self.connect
+        connection.prepare('update', "UPDATE #{table} SET #{columns} WHERE #{where}")
+        connection.exec_prepared('update', values.values) 
+        self.disconnect
       end
 
       def store_data(table, values)
