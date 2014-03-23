@@ -100,20 +100,22 @@ module TaxiTwin
 
       def update_data(table, values, condition)
         columns = ''
+        offset = 0
         values.keys.each_with_index do |key, i|
           columns += "#{key} = $#{i+1},"
+          offset += 1
         end
         columns = "#{columns.chop}"
 
         where = ''
-        values.keys.each_with_index do |key, i|
-          where += "#{key} = $#{i+1} AND "
+        condition.keys.each_with_index do |key, i|
+          where += "#{key} = $#{i+1+offset} AND "
         end
         where.slice!(-5..-1)
 
         self.connect
         connection.prepare('update', "UPDATE #{table} SET #{columns} WHERE #{where}")
-        connection.exec_prepared('update', values.values) 
+        connection.exec_prepared('update', values.merge(condition).values) 
         self.disconnect
       end
 
@@ -136,6 +138,19 @@ module TaxiTwin
           res = connection.exec_prepared('insert', values.values)
           self.disconnect
           res.values.flatten[0]
+      end
+
+      def remove_data(table, condition)
+        where = ''
+        condition.keys.each_with_index do |key, i|
+          where += "#{key} = $#{i+1} AND "
+        end
+        where.slice!(-5..-1)
+
+        self.connect
+        connection.prepare('delete', "DELETE FROM #{table} WHERE #{where}")
+        connection.exec_prepared('update', condition.values) 
+        self.disconnect
       end
     end
   end

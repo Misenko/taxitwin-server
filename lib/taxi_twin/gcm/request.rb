@@ -23,6 +23,8 @@ module TaxiTwin
           subscribe
         when :modify
           modify
+        when :unsubscribe
+          unsubscribe(tt_data['taxitwin_id'])
         else
           invalid_request_type
         end
@@ -89,12 +91,12 @@ module TaxiTwin
           tmp.delete 'radius'
           tmp['id'] = new_taxitwin['id']
           data['from'] = value['google_id']
-          send_response tmp unless tmp.size <= 1
+          send_response tmp unless tmp.size <= 2
         end
 
         to_change = tt_data
         to_change.delete 'type'
-        if to_change.include? 'start_long' and to_change.include? 'start_lat'
+        if to_change.include? 'start_long' or to_change.include? 'start_lat'
 
           start_long = to_change['start_long']
           start_lat = to_change['start_lat']
@@ -114,7 +116,7 @@ module TaxiTwin
           to_change['start_point_id'] = start_id
         end
 
-        if to_change.include? 'end_long' and to_change.include? 'end_lat'
+        if to_change.include? 'end_long' or to_change.include? 'end_lat'
 
           end_long = to_change['end_long']
           end_lat = to_change['end_lat']
@@ -163,6 +165,12 @@ module TaxiTwin
         h
       end
 
+      def unsubscribe(taxitwin_id)
+        #TODO remove from all the other tables and send proper messages
+        dc = TaxiTwin::Db::Controler.new
+        dc.remove_data('taxitwin', {'id' => taxitwin_id})
+      end
+
       def subscribe
         start_long = tt_data['start_long'].to_f
         start_lat = tt_data['start_lat'].to_f
@@ -174,11 +182,6 @@ module TaxiTwin
         passengers = tt_data['passengers']
 
         dc = TaxiTwin::Db::Controller.new
-        dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius) do |row|
-          row.delete 'google_id'
-          row['type'] = 'offer'
-          send_response row
-        end
 
         device_id = dc.exists?('device', {'google_id' => from})
         unless device_id
@@ -186,6 +189,17 @@ module TaxiTwin
           tmp['google_id'] = from
           tmp['name'] = name
           device_id = dc.store_data('device', tmp)
+        end
+
+        taxitwin_id = dc.exists?('taxitwin', {'device_id' => device_id})
+        if taxitwin_id
+          unsubscribe(taxitwin_id)
+        end
+
+        dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius) do |row|
+          row.delete 'google_id'
+          row['type'] = 'offer'
+          send_response row
         end
 
         gcoder = GCoder.connect
