@@ -24,7 +24,7 @@ module TaxiTwin
         when :modify
           modify
         when :unsubscribe
-          unsubscribe(tt_data['taxitwin_id'])
+          unsubscribe(data['from'])
         else
           invalid_request_type
         end
@@ -41,6 +41,10 @@ module TaxiTwin
         new_taxitwin = old_taxitwin.clone
         tt_data.each_pair do |key, value|
           new_taxitwin[key] = value
+        end
+
+        if tt_data.include?('radius')
+          new_taxitwin['radius'] = new_taxitwin['radius'].to_f/100000
         end
 
         TaxiTwin::Log.debug "new_taxitwin: #{new_taxitwin}"
@@ -165,10 +169,13 @@ module TaxiTwin
         h
       end
 
-      def unsubscribe(taxitwin_id)
+      def unsubscribe(google_id)
         #TODO remove from all the other tables and send proper messages
-        dc = TaxiTwin::Db::Controler.new
-        dc.remove_data('taxitwin', {'id' => taxitwin_id})
+        dc = TaxiTwin::Db::Controller.new
+        device_id = dc.exists?('device', {'google_id' => google_id})
+        if device_id
+          dc.remove_data('taxitwin', {'device_id' => device_id})
+        end
       end
 
       def subscribe
@@ -193,7 +200,7 @@ module TaxiTwin
 
         taxitwin_id = dc.exists?('taxitwin', {'device_id' => device_id})
         if taxitwin_id
-          unsubscribe(taxitwin_id)
+          unsubscribe(from)
         end
 
         dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius) do |row|
