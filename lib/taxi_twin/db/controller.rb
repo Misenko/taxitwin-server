@@ -149,7 +149,7 @@ module TaxiTwin
 
         self.connect
         connection.prepare('delete', "DELETE FROM #{table} WHERE #{where}")
-        connection.exec_prepared('update', condition.values) 
+        connection.exec_prepared('delete', condition.values) 
         self.disconnect
       end
     end
