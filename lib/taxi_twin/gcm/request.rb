@@ -48,6 +48,7 @@ module TaxiTwin
         end
 
         TaxiTwin::Log.debug "new_taxitwin: #{new_taxitwin}"
+        TaxiTwin::Log.debug "old_taxitwin: #{old_taxitwin}"
 
         res = load_data_for_modify(old_taxitwin, new_taxitwin)
 
@@ -138,6 +139,10 @@ module TaxiTwin
           to_change.delete 'end_long'
           to_change.delete 'end_lat'
           to_change['end_point_id'] = end_id
+        end
+
+        if to_change.include? 'radius'
+          to_change['radius'] = to_change['radius'].to_f/100000 
         end
 
         TaxiTwin::Log.debug("to_change: #{to_change}")
