@@ -7,9 +7,9 @@ module TaxiTwin
 
       def connect
         @connection = PG.connect(
-        :dbname => ENV['DB_NAME'],
-        :user => ENV['DB_USER'],
-        :password => ENV['DB_PASS'])
+          :dbname => ENV['DB_NAME'],
+          :user => ENV['DB_USER'],
+          :password => ENV['DB_PASS'])
       end
 
       def disconnect
@@ -55,10 +55,10 @@ module TaxiTwin
 
       def load_data_on_subscribe(start_long, start_lat, end_long, end_lat, radius)
         self.connect
-        
+
         start_point = "SRID=4326;POINT(#{start_long} #{start_lat})"
         end_point = "SRID=4326;POINT(#{end_long} #{end_lat})"
-        
+
         params = [start_point, end_point, radius]
 
         f = open_sql_file 'subscribe.sql'
@@ -84,7 +84,7 @@ module TaxiTwin
         connection.exec_prepared('load_taxitwin', [device_id]).each {|x| yield x if block_given?}
         self.disconnect
       end
-      
+
       def exists?(table, values)
         where = ''
         values.keys.each_with_index do |key, i|
@@ -96,6 +96,20 @@ module TaxiTwin
         res = connection.exec_prepared('exist', values.values) 
         self.disconnect
         res.any? ? res.values.flatten[0] : nil
+      end
+
+      def fetch_data(table, columns, condition)
+        where = ''
+        condition.keys.each_with_index do |key, i|
+          where += "#{key} = $#{i+1} AND "
+        end
+        where.slice!(-5..-1)
+
+        self.connect
+        connection.prepare('fetch', "SELECT #{columns.join ','} FROM #{table} WHERE #{where}")
+        res = connection.exec_prepared('fetch', condition.values)
+        self.disconnect
+        res.any? ? res.values.flatten : nil
       end
 
       def update_data(table, values, condition)
@@ -134,10 +148,14 @@ module TaxiTwin
           columns = "#{columns.chop}, geom)"
           placeholders = "#{placeholders.chop}, ST_SetSRID(ST_MakePoint($#{values.keys.index('longitude')+1},$#{values.keys.index('latitude')+1}),4326))"
         end
+        if ["participants", "pending_offer", "pending_response"].include? table
+          connection.prepare('insert', "INSERT INTO #{table} #{columns} VALUES #{placeholders}")
+        else
           connection.prepare('insert', "INSERT INTO #{table} #{columns} VALUES #{placeholders} RETURNING id")
-          res = connection.exec_prepared('insert', values.values)
-          self.disconnect
-          res.values.flatten[0]
+        end
+        res = connection.exec_prepared('insert', values.values)
+        self.disconnect
+        res.any? ? res.values.flatten[0] : nil
       end
 
       def remove_data(table, condition)

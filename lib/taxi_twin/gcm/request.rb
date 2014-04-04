@@ -25,6 +25,8 @@ module TaxiTwin
           modify
         when :unsubscribe
           unsubscribe(data['from'])
+        when :accept_offer
+          accept_offer
         else
           invalid_request_type
         end
@@ -181,6 +183,53 @@ module TaxiTwin
         if device_id
           dc.remove_data('taxitwin', {'device_id' => device_id})
         end
+      end
+
+      def accept_offer
+        taxitwin_id = tt_data['taxitwin_id'].to_i
+        google_id = data['from']
+
+        dc = TaxiTwin::Db::Controller.new
+
+        from_device_id = dc.exists?('device', {'google_id' => google_id})
+        unless from_device_id
+          TaxiTwin::Log.error "There is no device with google_id #{google_id} in database."
+          return
+        end
+
+        to_device_id = dc.fetch_data('taxitwin', ['device_id'], {'id' => taxitwin_id})
+        unless to_device_id
+          TaxiTwin::Log.error "There is no device with taxitwin_id #{taxitwin_id} in database."
+          return
+        end
+        to_device_id = to_device_id[0].to_i
+
+        TaxiTwin::Log.debug "to_device_id: #{to_device_id}"
+
+        pending_response = dc.fetch_data('pending_response', ['from_device_id', 'to_device_id'], {"from_device_id" => from_device_id, "to_device_id" => to_device_id[0].to_i})
+        if pending_response
+          TaxiTwin::Log.info "response already acknowledged - not sending again"
+          return
+        end
+
+        dc.store_data('pending_response', {"from_device_id" => from_device_id, "to_device_id" => to_device_id})
+
+        taxitwin = {}
+        dc.load_taxitwin(google_id) do |row|
+          TaxiTwin::Log.debug "row: #{row}"
+          taxitwin = row
+        end
+
+        TaxiTwin::Log.debug "taxitwin: #{taxitwin}"
+
+        taxitwin.delete 'google_id'
+        taxitwin.delete 'passengers_total'
+        taxitwin.delete 'passengers'
+        taxitwin.delete 'radius'
+        taxitwin['type'] = 'response'
+        data['from'] = dc.fetch_data('device', ['google_id'], {"id" => to_device_id})[0]
+        TaxiTwin::Log.debug "taxitwin response: #{taxitwin}"
+        send_response taxitwin
       end
 
       def subscribe
