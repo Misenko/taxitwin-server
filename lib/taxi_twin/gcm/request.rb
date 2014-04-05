@@ -93,13 +93,8 @@ module TaxiTwin
           send_response tmp
         end
 
-        res['inter'].each_value do |value|
-          tmp = tt_data.clone
-          tmp.delete 'radius'
-          tmp['id'] = new_taxitwin['id']
-          data['from'] = value['google_id']
-          send_response tmp unless tmp.size <= 2
-        end
+        inter_tmp = tt_data.clone
+        inter_tmp.delete 'radius'
 
         to_change = tt_data
         to_change.delete 'type'
@@ -109,6 +104,7 @@ module TaxiTwin
           start_lat = to_change['start_lat']
           gcoder = GCoder.connect
           start_textual = gcoder[[start_lat, start_long]][0]['formatted_address']
+          inter_tmp['start_text'] = start_textual
 
           start_id = dc.exists?('point', {'longitude' => start_long, 'latitude' => start_lat})
           unless start_id
@@ -129,6 +125,7 @@ module TaxiTwin
           end_lat = to_change['end_lat']
           gcoder = GCoder.connect
           end_textual = gcoder[[end_lat, end_long]][0]['formatted_address']
+          inter_tmp['end_text'] = end_textual
 
           end_id = dc.exists?('point', {'longitude' => end_long, 'latitude' => end_lat})
           unless end_id
@@ -145,6 +142,12 @@ module TaxiTwin
 
         if to_change.include? 'radius'
           to_change['radius'] = to_change['radius'].to_f/100000 
+        end
+
+        res['inter'].each_value do |value|
+          inter_tmp['id'] = new_taxitwin['id']
+          data['from'] = value['google_id']
+          send_response inter_tmp unless tmp.size <= 2
         end
 
         TaxiTwin::Log.debug("to_change: #{to_change}")
@@ -184,7 +187,7 @@ module TaxiTwin
         device_id = dc.exists?('device', {'google_id' => google_id})
 
         unless device_id
-          TaxiTwin::Log.error "there is no device with id: #{device_id} in the db"
+          TaxiTwin::Log.error "there is no device with google_id: #{google_id} in the db"
           return
         end
 
@@ -327,7 +330,7 @@ module TaxiTwin
         tmp['start_text'] = start_textual
         tmp['end_text'] = end_textual
         tmp['passengers_total'] = tt_data['passengers']
-        tmp['passenegers'] = '0'
+        tmp['passengers'] = '0'
         tmp['name'] = name
         tmp['type'] = 'offer'
         dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, "taxitwin.radius") do |row|
