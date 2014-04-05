@@ -178,8 +178,35 @@ module TaxiTwin
 
       def unsubscribe(google_id)
         #TODO remove from all the other tables and send proper messages
+        TaxiTwin::Log.debug "unsubscribe google_id: #{google_id}"
+
         dc = TaxiTwin::Db::Controller.new
         device_id = dc.exists?('device', {'google_id' => google_id})
+
+        unless device_id
+          TaxiTwin::Log.error "there is no device with id: #{device_id} in the db"
+          return
+        end
+
+        taxitwin = {}
+        dc.load_taxitwin(google_id) do |row|
+          TaxiTwin::Log.debug "row: #{row}"
+          taxitwin = row
+        end
+
+        start_long = taxitwin['start_long']
+        start_lat = taxitwin['start_lat']
+        end_long = taxitwin['end_long']
+        end_lat = taxitwin['end_lat']
+
+        dc.load_data_on_subscribe(start_long, start_lat, end_long, end_lat, "taxitwin.radius") do |row|
+          data['from'] = row['google_id'] 
+          tmp = {}
+          tmp['type'] = "invalidate"
+          tmp['id'] = taxitwin['id']
+          send_response tmp unless row['google_id'] == google_id
+        end
+
         if device_id
           dc.remove_data('taxitwin', {'device_id' => device_id})
         end
@@ -297,8 +324,8 @@ module TaxiTwin
         tmp.delete 'type'
         tmp.delete 'radius'
         tmp['id'] = tt_id
-        tmp['start_textual'] = start_textual
-        tmp['end_textual'] = end_textual
+        tmp['start_text'] = start_textual
+        tmp['end_text'] = end_textual
         tmp['passengers_total'] = tt_data['passengers']
         tmp['passenegers'] = '0'
         tmp['name'] = name
