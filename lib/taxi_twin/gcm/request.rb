@@ -27,6 +27,8 @@ module TaxiTwin
           unsubscribe(data['from'])
         when :accept_offer
           accept_offer
+        when :decline_response
+          decline_response
         else
           invalid_request_type
         end
@@ -213,6 +215,21 @@ module TaxiTwin
         if device_id
           dc.remove_data('taxitwin', {'device_id' => device_id})
         end
+      end
+
+      def decline_response
+        taxitwin_id = tt_data['taxitwin_id'].to_i
+
+        dc = TaxiTwin::Db::Controller.new
+
+        device_id = dc.fetch_data('taxitwin', ['device_id'], {'id' => taxitwin_id})
+        unless device_id
+          TaxiTwin::Log.error "There is no device with taxitwin_id #{taxitwin_id} in database."
+          return
+        end
+        device_id = device_id[0].to_i
+
+        dc.remove_data('pending_response', {'from_device_id' => device_id})
       end
 
       def accept_offer
