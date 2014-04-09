@@ -31,6 +31,8 @@ module TaxiTwin
           decline_response
         when :accept_response
           accept_response
+        when :leave_taxitwin
+          leave_taxitwin
         else
           invalid_request_type
         end
@@ -102,6 +104,7 @@ module TaxiTwin
 
         to_change = tt_data
         to_change.delete 'type'
+        to_change.delete 'passengers' if to_change.include? 'passengers'
         if to_change.include? 'start_long' or to_change.include? 'start_lat'
 
           start_long = to_change['start_long']
@@ -156,7 +159,7 @@ module TaxiTwin
 
         TaxiTwin::Log.debug("to_change: #{to_change}")
 
-        dc.update_data('taxitwin', to_change, {'id' => new_taxitwin['id']})
+        dc.update_data('taxitwin', to_change, {'id' => new_taxitwin['id']}) unless to_change.empty?
       end
 
       def load_data_for_modify(old_taxitwin, new_taxitwin)
@@ -227,12 +230,129 @@ module TaxiTwin
         end
 
         if device_id
-          dc.remove_data('participants', {'device_id' => device_id})
-          dc.remove_data('share', {'owner_taxitwin_id' => taxitwin['id']})
+          #dc.remove_data('participants', {'device_id' => device_id})
+          #dc.remove_data('share', {'owner_taxitwin_id' => taxitwin['id']})
           dc.remove_data('pending_response', {'from_device_id' => device_id})
           dc.remove_data('pending_response', {'to_device_id' => device_id})
           dc.remove_data('taxitwin', {'device_id' => device_id})
         end
+      end
+
+      def leave_taxitwin
+        google_id = data['from']
+
+        dc = TaxiTwin::Db::Controller.new
+        join_table = 'taxitwin INNER JOIN device ON taxitwin.device_id = device.id'
+        taxitwin_id = dc.fetch_data(join_table, ['taxitwin.id'], {'google_id' => google_id})
+        unless taxitwin_id
+          TaxiTwin::Log.error "There is no taxitwin with google_id #{google_id} in database."
+          return
+        end
+        taxitwin_id = taxitwinid[0].to_i
+        owner_taxitwin_google_id
+
+        share_id = dc.exists?('share', {'owner_taxitwin_id' => taxitwin_id})
+        if share_id
+          join_table = 'participants INNER JOIN device ON participants.device_id = device.id'
+          participants = dc.fetch_data(join_table, ['google_id'], {'share_id' => share_id})
+          dc.remove_data('share', {'id' => share_id})
+          participants.each do |participant|
+            tmp = {}
+            tmp['type'] = 'no_longer'
+            data['from'] = participant
+            send_response tmp
+
+            participant_taxitwin = nil
+            dc.load_taxitwin(participant) do |row|
+              participant_taxitwin = row
+            end
+            unless participant_taxitwin
+              TaxiTwin::Log.error "There is no taxitwin with google_id #{participant} in database."
+              return
+            end
+            
+            matches = []
+            dc.load_data_on_subscribe(participant_taxitwin['start_long'], participant_taxitwin['start_lat'],participant_taxitwin['end_long'], participant_taxitwin['end_lat'], 'taxitwin.radius') do |row|
+              matches << row
+            end
+
+            matches.each do |match|
+            tmp = participant_taxitwin.clone
+            tmp.delete 'google_id'
+            tmp.delete 'radius'
+            tmp['type'] = 'offer'
+            data['from'] = match['google_id']
+            send_response tmp unless match['google_id'] == participant_taxitwin['google_id']
+            end
+          end
+
+          owner_taxitwin_google_id = google_id
+        else
+          join_table = 'participants INNER JOIN device ON participants.device_id = device.id'
+          share_id = dc.fetch_data(join_table, ['share.id'], {'google_id' => google_id})
+          unless share_id
+            TaxiTwin::Log.error "There is no share with google_id #{google_id} in database."
+            return
+          end
+
+          join_table = 'share INNER JOIN taxitwin ON share.owner_taxitwin_id = taxitwin.id INNER JOIN device ON taxitwin.device_id = device.id'
+          owner_taxitwin_google_id = dc.fetch(join_table, ['google_id'], {'share.id' => share_id})
+          unless owner_taxitwin_google_id
+            TaxiTwin::Log.error "There is no google_id with share_id #{share_id} in database."
+            return
+          end
+          owner_taxitwin_google_id = owner_taxitwin_google_id[0]
+
+          device_id = dc.exists?('device', {'google_id' => google_id})
+          unless device_id
+            TaxiTwin::Log.error "There is no device with google_id #{google_id} in database."
+            return
+          end
+          dc.remove_data('participants', {'device_id' => device_id})
+        end
+
+        owner_taxitwin = nil
+        dc.load_taxitwin(owner_taxitwin_google_id) do |row|
+          owner_taxitwin = row
+        end
+
+        unless owner_taxitwin
+          TaxiTwin::Log.error "There is no taxitwin with google_id #{owner_taxitwin_google_id} in database."
+          return
+        end
+
+        matches = []
+        dc.load_data_on_subscribe(owner_taxitwin['start_long'], owner_taxitwin['start_lat'],owner_taxitwin['end_long'], owner_taxitwin['end_lat'], owner_taxitwin['radius']) do |row|
+          matches << row['google_id']
+        end
+        if owner_taxitwin['passengers_total'] == owner_taxitwin['passengers'] + 1
+          matches.each do |match|
+            tmp = owner_taxitwin.clone
+            tmp.delete 'radius'
+            tmp.delete 'google_id'
+            tmp['type'] = 'offer'
+            data['from'] = match
+            send_response tmp unless match == owner_taxitwin['google_id']
+          end
+        else
+          matches.each do |match|
+            tmp = {}
+            tmp['type'] = 'modify'
+            tmp['id'] = owner_taxitwin['id']
+            tmp['passengers'] = owner_taxitwin['passengers'].to_i
+            data['from'] = match
+            send_response tmp unless match = owner_taxitwin['google_id']
+          end
+        end
+
+        if owner_taxitwin['passengers'].to_i == 0
+          tmp = {}
+          tmp['type'] = 'no_longer'
+          data['from'] = owner_taxitwin_google_id
+          send_response tmp
+          dc.remove_data('share', {'id' => share_id}) if dc.exists?('share', {'owner_taxitwin_id' => owner_taxitwin['id']})
+        end
+        #unsubscribe(google_id)
       end
 
       def decline_response
@@ -351,15 +471,6 @@ module TaxiTwin
         join_table = 'participants INNER JOIN device ON participants.device_id = device.id'
         participants = dc.fetch_data(join_table, ['google_id'], {'share_id' => share_id})
 
-        if owner_taxitwin['passengers_total'].to_i == owner_taxitwin['passengers'].to_i + 1
-          matches.each do |match|
-            tmp = {}
-            tmp['type'] = invalidate
-            data['from'] = match['google_id']
-            send_response tmp unless (participants.include? match['google_id']) or (match['google_id'] = google_id)
-          end
-        end
-
         join_table = 'taxitwin INNER JOIN device ON taxitwin.device_id = device.id'
         new_participant_google_id = dc.fetch_data(join_table, ['google_id'], {'taxitwin.id' => taxitwin_id})
         unless new_participant_google_id
@@ -373,16 +484,34 @@ module TaxiTwin
         data['from'] = new_participant_google_id
         send_response tmp
 
-        count  = participants.count
-        participants << google_id
-        participants.each do |participant|
-          tmp = {}
-          tmp['type'] = 'modify'
-          tmp['passengers'] = count
-          tmp['id'] = owner_taxitwin_id
-          data['from'] = participant
-          send_response tmp
+        if owner_taxitwin['passengers_total'].to_i == owner_taxitwin['passengers'].to_i + 1
+          matches.each do |match|
+            tmp = {}
+            tmp['type'] = invalidate
+            data['from'] = match['google_id']
+            send_response tmp unless (participants.include? match['google_id']) or (match['google_id'] = google_id)
+          end
+        else
+          matches.each do |match|
+            tmp = {}
+            tmp['type'] = 'modify'
+            tmp['passengers'] = owner_taxitwin['passengers'].to_i + 1
+            tmp['id'] = owner_taxitwin_id
+            data['from'] = match['google_id']
+            send_response tmp
+          end
         end
+
+        #count  = participants.count
+        #participants << google_id
+        #participants.each do |participant|
+        #  tmp = {}
+        #  tmp['type'] = 'modify'
+        #  tmp['passengers'] = count
+        #  tmp['id'] = owner_taxitwin_id
+        #  data['from'] = participant
+        #  send_response tmp
+        #end
       end
 
       def subscribe
