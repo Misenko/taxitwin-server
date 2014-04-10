@@ -248,8 +248,8 @@ module TaxiTwin
           TaxiTwin::Log.error "There is no taxitwin with google_id #{google_id} in database."
           return
         end
-        taxitwin_id = taxitwinid[0].to_i
-        owner_taxitwin_google_id
+        taxitwin_id = taxitwin_id[0].to_i
+        owner_taxitwin_google_id = nil
 
         share_id = dc.exists?('share', {'owner_taxitwin_id' => taxitwin_id})
         if share_id
@@ -282,21 +282,22 @@ module TaxiTwin
             tmp.delete 'radius'
             tmp['type'] = 'offer'
             data['from'] = match['google_id']
-            send_response tmp unless match['google_id'] == participant_taxitwin['google_id']
+            send_response tmp unless (match['google_id'] == participant_taxitwin['google_id']) or (match['google_id'] == google_id)
             end
           end
 
           owner_taxitwin_google_id = google_id
         else
           join_table = 'participants INNER JOIN device ON participants.device_id = device.id'
-          share_id = dc.fetch_data(join_table, ['share.id'], {'google_id' => google_id})
+          share_id = dc.fetch_data(join_table, ['share_id'], {'google_id' => google_id})
           unless share_id
-            TaxiTwin::Log.error "There is no share with google_id #{google_id} in database."
+            TaxiTwin::Log.error "There is no participant with google_id #{google_id} in database."
             return
           end
+          share_id = share_id[0].to_i
 
           join_table = 'share INNER JOIN taxitwin ON share.owner_taxitwin_id = taxitwin.id INNER JOIN device ON taxitwin.device_id = device.id'
-          owner_taxitwin_google_id = dc.fetch(join_table, ['google_id'], {'share.id' => share_id})
+          owner_taxitwin_google_id = dc.fetch_data(join_table, ['google_id'], {'share.id' => share_id})
           unless owner_taxitwin_google_id
             TaxiTwin::Log.error "There is no google_id with share_id #{share_id} in database."
             return
@@ -325,7 +326,7 @@ module TaxiTwin
         dc.load_data_on_subscribe(owner_taxitwin['start_long'], owner_taxitwin['start_lat'],owner_taxitwin['end_long'], owner_taxitwin['end_lat'], owner_taxitwin['radius']) do |row|
           matches << row['google_id']
         end
-        if owner_taxitwin['passengers_total'] == owner_taxitwin['passengers'] + 1
+        if owner_taxitwin['passengers_total'].to_i == owner_taxitwin['passengers'].to_i + 1
           matches.each do |match|
             tmp = owner_taxitwin.clone
             tmp.delete 'radius'
@@ -434,7 +435,7 @@ module TaxiTwin
           TaxiTwin::Log.error "There is no device with taxitwin_id #{taxitwin_id} in database."
           return
         end
-        from_device_id = to_device_id[0].to_i
+        from_device_id = from_device_id[0].to_i
 
         TaxiTwin::Log.debug "to_device_id: #{to_device_id}"
 
@@ -486,10 +487,18 @@ module TaxiTwin
 
         if owner_taxitwin['passengers_total'].to_i == owner_taxitwin['passengers'].to_i + 1
           matches.each do |match|
-            tmp = {}
-            tmp['type'] = invalidate
-            data['from'] = match['google_id']
-            send_response tmp unless (participants.include? match['google_id']) or (match['google_id'] = google_id)
+            invalidate_tmp = {}
+            invalidate_tmp['type'] = invalidate
+            modify_tmp = {}
+            modify_tmp['type'] = 'modify'
+            modify_tmp['passengers'] = owner_taxitwin['passengers'].to_i + 1
+            modify_tmp['id'] = owner_taxitwin_id
+            data['from'] = match
+            if (participants.include? match) or (match = google_id)
+              send_response modify_tmp
+            else
+              send_response invalidate_tmp
+            end
           end
         else
           matches.each do |match|
@@ -497,11 +506,17 @@ module TaxiTwin
             tmp['type'] = 'modify'
             tmp['passengers'] = owner_taxitwin['passengers'].to_i + 1
             tmp['id'] = owner_taxitwin_id
-            data['from'] = match['google_id']
+            data['from'] = match
             send_response tmp
           end
         end
 
+        tmp = {}
+        tmp['type'] = 'modify'
+        tmp['passengers'] = owner_taxitwin['passengers'].to_i + 1
+        tmp['id'] = owner_taxitwin_id
+        data['from'] = google_id
+        send_response tmp
         #count  = participants.count
         #participants << google_id
         #participants.each do |participant|
