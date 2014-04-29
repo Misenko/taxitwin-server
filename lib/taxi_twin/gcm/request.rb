@@ -198,10 +198,15 @@ module TaxiTwin
           return
         end
 
-        taxitwin = {}
+        taxitwin = nil
         dc.load_taxitwin(google_id) do |row|
           TaxiTwin::Log.debug "row: #{row}"
           taxitwin = row
+        end
+
+        unless taxitwin
+          TaxiTwin::Log.error "there is no taxitwin with google_id: #{google_id} in the db"
+          return
         end
 
         start_long = taxitwin['start_long']
